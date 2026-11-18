@@ -1,2 +1,10 @@
 # Tarea_3
 Repositorio de la Tarea 3 PF-0953
+
+La ciudad de Liberia, en la provincia de Guanacaste, ubicada en la región Pacífico Norte de Costa Rica, presenta un alta varibilidad climática que la hace particularmente vulnerable a fenómenos meteorológicos extremos. Durante la época lluviosa, la influencia de ondas tropicales, sistemas de baja presión y huracanes genera precipitaciones de alta intensidad que frecuentemente superan la capacidad de infiltración del suelo y el caudal máximo de diseño de las infraestructuras de drenaje existentes. Esta situación provoca desbordamientos en los cauces, generando inundaciones que afectan severamente a las comunidades locales, la infraestructura civil y las actividades agrícolas.
+
+Adicional a los efectos sobre el territorio provocados por las lluvias, se encuentra la falta de planificación urbana, que contribuye a la construcción de nuevos asentamientos, incluyendo complejos residenciales de alto costo en zonas limítrofes con ríos.
+
+En este contexto, el presente análisis se centra en la evaluación de los datos de precipitación obtenidos del conjunto de datos del *Climate Hazards Group InfraRed Precipitation with Station data* (CHIRPS), que combina información de sensores satelitales y, de estaciones meteorológicas para proporcionar estimaciones de la precipitación diaria. El objetivo es identificar patrones de precipitación, evaluar la variabilidad temporal y espacial, y generar visualizaciones que faciliten la comprensión de los riesgos asociados a eventos extremos de lluvia en Liberia.
+
+Como una variable adicional, se utilizan los datos de temperatura para elaborar un escenario de las condiciones climáticas. Estos registros se obtuvieron del sensor satelital *ERA5-Land Daily Aggregated* (ECMWF). Los registros, para el período enero 2026 a setiembre 2026, se incluyeron en un archivo .csv dentro de este repositorio y en el enlace se encuentra el documento de análisis.
