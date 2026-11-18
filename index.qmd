@@ -1,0 +1,639 @@
+---
+title: "Tarea 3: Análisis Espacial y Temporal de la Precipitación en la Cuenca del Río Liberia"
+subtitle: "PF-0953 Programación en R (2026-II)"
+title-block-banner: "#f0f3f5"
+title-block-banner-color: "black"
+author: "Dennier Chávez Garro"
+date: 2026-11-16
+lang: es 
+number-sections: true
+crossref:
+  chapters: true
+echo: true
+editor: visual
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+    code-summary: "Mostrar el código"
+    toc: true
+    toc-title: "Tabla de Contenido"
+    mainfont: "Inter"
+    monofont: "Cascadia Code"
+    include-in-header:
+      - text: |
+          <link rel="preconnect" href="https://fonts.googleapis.com">
+          <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+          <link href="https://fonts.googleapis.com/css2?family=Cascadia+Code:ital,wght@0,400..700;1,400..700&family=Inter:wght@300;400;500;600;700&display=           swap" rel="stylesheet">
+          <style>
+            body, h1, h2, h3, h4, h5, h6, p, li, table, 
+            .title, .subtitle, .toc-title, .figure-caption, .leaflet-container {
+              font-family: 'Inter', sans-serif !important;
+            }
+            pre, code, kbd, samp, .sourceCode, div.sourceCode {
+              font-family: 'Cascadia Code', monospace !important;
+            }
+          </style>
+execute:
+  warning: false
+  message: false
+  
+---
+
+```{r}
+#| label: carga-bibliotecas
+#| message: false
+#| warning: false
+
+# Ecosistema tidyverse y manejo de datos
+library(tidyverse)
+library(readr)
+library(dplyr)
+library(scales)
+library(lubridate)
+
+# Visualización interactiva y tablas
+library(plotly)
+library(DT)
+
+# Análisis geoespacial y cartografía
+library(sf)
+library(leaflet)
+library(ggspatial)
+
+# Tipografías y presentación
+library(showtext)
+```
+
+```{r}
+#| label: setup
+#| include: false
+
+# 1. Registrar 'Inter' en el motor gráfico de Windows
+if (.Platform$OS.type == "windows") {
+  windowsFonts(Inter = windowsFont("sans"))
+}
+
+# 2. Activar fuente Inter
+font_add_google(name = "Inter", family = "Inter")
+showtext_auto()
+
+# 3. Vector auxiliar para meses en español
+meses_es <- c("Ene", "Feb", "Mar", "Abr", "May", "Jun",
+              "Jul", "Ago", "Sep", "Oct", "Nov", "Dic")
+
+# 4. Tema global de ggplot2
+theme_set(
+  theme_minimal(base_size = 13, base_family = "Inter") +
+    theme(
+      plot.title = element_text(face = "bold", size = 15, color = "#1e293b"),
+      plot.subtitle = element_text(color = "#475569", size = 12),
+      axis.title = element_text(color = "#334155", size = 11),
+      axis.text.x = element_text(angle = 45, hjust = 1, color = "#475569"),
+      axis.text.y = element_text(color = "#475569"),
+      panel.grid.minor = element_blank()
+    )
+)
+
+update_geom_defaults("text", list(family = "Inter"))
+update_geom_defaults("label", list(family = "Inter"))
+```
+
+# Introducción
+
+La ciudad de Liberia, en la provincia de Guanacaste, ubicada en la región Pacífico Norte de Costa Rica, presenta un alta varibilidad climática que la hace particularmente vulnerable a fenómenos meteorológicos extremos. Durante la época lluviosa, la influencia de ondas tropicales, sistemas de baja presión y huracanes genera precipitaciones de alta intensidad que frecuentemente superan la capacidad de infiltración del suelo y el caudal máximo de diseño de las infraestructuras de drenaje existentes. Esta situación provoca desbordamientos en los cauces, generando inundaciones que afectan severamente a las comunidades locales, la infraestructura civil y las actividades agrícolas.
+
+Adicional a los efectos sobre el territorio provocados por las lluvias, se encuentra la falta de planificación urbana, que contribuye a la construcción de nuevos asentamientos, incluyendo complejos residenciales de alto costo en zonas limítrofes con ríos.
+
+En este contexto, el presente análisis se centra en la evaluación de los datos de precipitación obtenidos del conjunto de datos del *Climate Hazards Group InfraRed Precipitation with Station data* (CHIRPS), que combina información de sensores satelitales y, de estaciones meteorológicas para proporcionar estimaciones de la precipitación diaria. El objetivo es identificar patrones de precipitación, evaluar la variabilidad temporal y espacial, y generar visualizaciones que faciliten la comprensión de los riesgos asociados a eventos extremos de lluvia en Liberia.
+
+Como una variable adicional, se utilizan los datos de temperatura para elaborar un escenario de las condiciones climáticas. Estos registros se obtuvieron del sensor satelital *ERA5-Land Daily Aggregated* (ECMWF).
+
+Los registros, para el período enero 2026 a setiembre 2026, se incluyeron en un archivo .csv.  En la @tbl-DT-1 se muestran los valores diarios, para un punto en la cuenca del río Liberia.
+
+```{r}
+#| label: tbl-DT-1
+#| tbl-cap: "Registro diario de precipitación y temperatura en Liberia (Enero–Septiembre 2026)"
+
+# Lectura única del dataset puntual de la Tarea 2
+url_t2 <- "https://raw.githubusercontent.com/dennierchavez/tarea_2/refs/heads/main/CHIRPS.csv"
+precipitacion_t2 <- read_csv(url_t2, show_col_types = FALSE) |> 
+  mutate(
+    date = as.Date(date),
+    precipitation = coalesce(as.numeric(precipitation), 0)
+  )
+
+# Renderizado de la tabla con DT
+precipitacion_t2 |>
+  mutate(
+    across(any_of(c("lon", "lat")), ~ round(.x, 5)),
+    across(where(is.numeric) & !any_of(c("lon", "lat")), ~ round(.x, 2))
+  ) |>
+  rename(any_of(c(
+    "ID"                 = "id",
+    "Longitud"           = "lon",
+    "Latitud"            = "lat",
+    "Fecha"              = "date",
+    "Precipitación (mm)" = "precipitation",
+    "Temp. Media (°C)"   = "tmean",
+    "Temp. Mínima (°C)"  = "tmin",
+    "Temp. Máxima (°C)"  = "tmax"
+  ))) |>
+  datatable(
+    rownames = FALSE,
+    options = list(
+      pageLength = 10,
+      autoWidth = TRUE,
+      language = list(
+        search = "Buscar:",
+        lengthMenu = "Mostrar _MENU_ registros",
+        info = "Mostrando _START_ a _END_ de _TOTAL_ registros",
+        paginate = list(previous = "Anterior", `next` = "Siguiente")
+      )
+    )
+  )
+```
+
+En este documento se presentan los resultados del análisis de precipitación, incluyendo la visualización de la precipitación diaria, la temperatura media diaria y la curva masa de precipitación acumulada. Se pretende dar respuesta a tres interrogantes:
+
+1.  ¿Cuál es la distribución temporal de la precipitación diaria en Liberia durante el periodo de enero a septiembre de 2026?
+2.  ¿Cómo se comporta la temperatura media diaria en el mismo periodo y qué relación tiene con la precipitación?
+3.  ¿Cual es el comportamiento de la precipitación acumulada a lo largo del tiempo y cómo se puede representar mediante una curva masa interactiva?
+
+Con respecto al componente espacial, y dado que se cuenta con una base de datos que relaciona precipitación en series de tiempo para 100 puntos de muestreo aleatorio en la cuenca del río Liberia,se propone la siguiente pregunta:
+
+4. ¿Cómo se distribuye la precipitación acumulada en la cuenca? 
+
+
+Para una mejor comprensión del territorio, se utiliza la delimitación de la cuenca del río Liberia junto con mapas interactivos. La @fig-mapa-contexto contiene capas base que permiten ubicar la extensión del área de estudio considerada, así como identificar la zona urbana y las condiciones de topografía del terreno.Como parte del estudio para incluir la variable espacial, se incluye una capa de puntos de muestreo que serán utilizados para asignar lecturas de precipitación en el terreno (puntos CHIRPS).
+
+
+
+```{r}
+#| label: fig-mapa-contexto
+#| fig-cap: "Subcuenca del río Liberia y distribución de puntos de control"
+
+# Carga de la subcuenca
+url_subcuenca <- "https://raw.githubusercontent.com/dennierchavez/Tarea_3/refs/heads/main/Subcuenca_Liberia.geojson"
+subcuenca_sf <- st_read(url_subcuenca, quiet = TRUE) |> 
+  st_make_valid() |> 
+  st_transform(4326)
+
+# Carga de puntos de control
+url_puntos_geo <- "https://raw.githubusercontent.com/dennierchavez/Tarea_3/refs/heads/main/puntos_subcuenca_Lib.geojson"
+pts_control_sf <- st_read(url_puntos_geo, quiet = TRUE) |> 
+  st_transform(4326)
+
+coords_pts <- st_coordinates(pts_control_sf)
+pts_control_sf <- pts_control_sf |>
+  mutate(
+    id  = rand_point_id,
+    lon = coords_pts[, 1],
+    lat = coords_pts[, 2]
+  )
+
+leaflet() |>
+  addProviderTiles(providers$OpenTopoMap, group = "OpenTopoMap") |>
+  addProviderTiles(providers$OpenStreetMap, group = "OpenStreetMap") |>
+  addProviderTiles(providers$Esri.WorldImagery, group = "Satélite (Esri)") |>
+  
+  # Delimitación de la subcuenca
+  addPolygons(
+    data = subcuenca_sf,
+    group = "Subcuenca",
+    fillColor = "#0077b6",
+    fillOpacity = 0.25,
+    color = "#03045e",
+    weight = 2.5,
+    label = "Subcuenca del río Liberia"
+  ) |>
+  
+  # Puntos de muestreo
+  addCircleMarkers(
+    data = pts_control_sf,
+    group = "Puntos de Control",
+    radius = 5,
+    fillColor = "#fb8500",
+    fillOpacity = 0.85,
+    color = "#ffffff",
+    weight = 1.2,
+    popup = ~paste0(
+      "<b>Punto ID:</b> ", id,
+      "<br><b>Longitud:</b> ", round(lon, 5),
+      "<br><b>Latitud:</b> ", round(lat, 5)
+    ),
+    label = ~paste0("Punto ID: ", id)
+  ) |>
+  
+  addScaleBar(position = "bottomleft", options = scaleBarOptions(imperial = FALSE)) |>
+  addLayersControl(
+    baseGroups = c("OpenTopoMap", "OpenStreetMap", "Satélite (Esri)"),
+    overlayGroups = c("Subcuenca", "Puntos de Control"),
+    options = layersControlOptions(collapsed = FALSE)
+  ) |>
+  addControl(
+    html = "<div style='background:rgba(255,255,255,0.85); padding:3px 6px; font-size:11px; border-radius:3px;'>Fuente: Delimitación SIG Cuenca Río Liberia</div>",
+    position = "bottomright"
+  )
+```
+
+---
+
+# Análisis Temporal de Precipitación y Temperatura
+
+Una de las justificaciones para ubicar el estudio en el período enero 2026 a octubre 2026 es la expectativa de los efectos del fenómeno **ENOS** (El Niño-Oscilación del Sur) que es un reconocido patrón climático natural de escala global que surge de la interacción entre el océano y la atmósfera en el Pacífico ecuatorial central y oriental, con ciclos irregulares de cada 2 a 7 años. El Instituto Meteorológico Nacional (IMN) ha indicado que la probabilidad de un temporal en la vertiente del Pacífico costarricense en mucho menor en esta situación que en una condición normal, por lo que es razonable la ausencia o disminución de temporales, así como el aumento en la cantidad de días secos, lo que implica que al finalizar el año 2026 la cantidad de lluvia acumulada sea menor que la cantidad promedio.
+
+## Precipitación Diaria
+
+Entre enero y mediados de abril la precipitación fue prácticamente nula (0 mm). La transición hacia la época lluviosa en mayo fue errática y débil, concentrándose en apenas un par de lluvias puntuales (con un pico aislado de 40 mm/día) seguidas de semanas completamente secas. En la @fig-precip-diaria se evidencia una falta de lluvias acompañada de eventos extremos aislados, un comportamiento que coincide directamente con la consolidación del fenómeno de El Niño en el Pacífico Norte de Costa Rica durante 2026.
+
+```{r}
+#| label: fig-precip-diaria
+#| fig-cap: "Distribución de precipitación diaria en Liberia (Enero–Septiembre 2026)"
+#| fig-width: 9
+#| fig-height: 4.5
+
+ggplot(precipitacion_t2, aes(x = date, y = precipitation)) +
+  geom_col(fill = "#1d4ed8", width = 0.8, alpha = 0.9) +
+  scale_x_date(
+    date_breaks = "1 month", 
+    labels = function(x) paste(meses_es[as.integer(format(x, "%m"))], format(x, "%Y")),
+    expand = expansion(mult = c(0.01, 0.01))
+  ) +
+  scale_y_continuous(
+    labels = label_number(suffix = " mm", decimal.mark = ","),
+    expand = expansion(mult = c(0, 0.08))
+  ) +
+  labs(
+    title = "Precipitación Diaria (Enero–Septiembre 2026)",
+    subtitle = paste("Acumulado total registrado:", round(sum(precipitacion_t2$precipitation, na.rm = TRUE), 1), "mm"),
+    x = "Fecha",
+    y = "Precipitación (mm/día)",
+    caption = "Fuente: Estimaciones CHIRPS v3 (Climate Hazards Center, UCSB)."
+  )
+```
+
+Tal como se observa en la @fig-precip-diaria, tras un repunte de lluvias en la primera mitad de junio (con eventos de casi 40 mm/día), desde finales de junio hasta finales de agosto se observa un veranillo (canícula) sumamente prolongado, donde las precipitaciones diarias rara vez superaron los 10 a 15 mm. 
+
+A pesar de que la primera mitad de septiembre mantuvo condiciones deficitarias, el cierre del mes presentó aguaceros intensos (altas precipotaciones en cortos períodos de tiempo), destacando dos picos superiores a los 50 mm/día la precipitación diaria en Liberia durante el periodo de enero de 2026 a septiembre de 2026 muestra una variabilidad significativa, con picos de precipitación que reflejan eventos de lluvia intensa. 
+
+Al caer tanta agua en pocas horas tras semanas secas, el arrastre de sedimentos, polvo y residuos sólidos obstruye rápidamente el sistema de alcantarillado pluvial, provocando inundaciones en barrios vulnerables (como Pueblo Nuevo, Condega, El Capulín y Moracia) y crecidas súbitas del río Liberia a su paso por la ciudad.
+
+::: callout-important
+## Sobre el evento del 2026-06-05
+
+Debido a múltiples incidentes causados por inundaciones asociadas a lluvias intensas, la Cruz Roja Costarricense reportó que los equipos de primera respuesta evacuaron a siete personas cuyas viviendas se inundaron por completo.
+:::
+
+## Temperatura Media Diaria
+
+La evolución térmica observada en la @fig-temp-med-dia muestra una variabilidad con medias diarias oscilando entre los 24 °C y 31 °C.
+
+```{r}
+#| label: fig-temp-med-dia
+#| fig-cap: "Comportamiento de la temperatura media diaria en Liberia"
+#| fig-width: 9.5
+#| fig-height: 4.8
+
+datos_temp <- precipitacion_t2 |>
+  mutate(
+    etiqueta_tooltip = paste0(
+      "<b>Fecha:</b> ", format(date, "%d/%m/%Y"),
+      "<br><b>Temp. media:</b> ", round(tmean, 2), " °C",
+      "<br><b>Rango:</b> ", round(tmin, 1), " – ", round(tmax, 1), " °C"
+    )
+  )
+
+grafico_temp <- ggplot(datos_temp, aes(x = date, y = tmean)) +
+  geom_line(aes(text = etiqueta_tooltip, group = 1), color = "#ea580c", linewidth = 0.7) +
+  geom_smooth(method = "loess", span = 0.2, se = FALSE, color = "#b91c1c", linetype = "dashed", linewidth = 0.6) +
+  scale_x_date(
+    date_breaks = "1 month",
+    labels = function(x) paste(meses_es[as.integer(format(x, "%m"))], format(x, "%Y")),
+    expand = expansion(mult = c(0.01, 0.01))
+  ) +
+  scale_y_continuous(labels = label_number(suffix = " °C", decimal.mark = ",")) +
+  labs(
+    title = "Temperatura Media Diaria (ERA5-Land)",
+    x = "Fecha",
+    y = "Temperatura (°C)"
+  )
+
+ggplotly(grafico_temp, tooltip = "text") |>
+  layout(
+    hoverlabel = list(bgcolor = "white", font = list(size = 12)),
+    margin = list(b = 85),
+    annotations = list(
+      list(
+        text = "Línea continua: registro diario | Línea discontinua: tendencia LOESS | Fuente: ERA5-Land (ECMWF)",
+        xref = "paper", yref = "paper",
+        x = 0, y = -0.28,
+        showarrow = FALSE,
+        font = list(size = 10, color = "#64748b")
+      )
+    )
+  ) |>
+  config(locale = "es", displaylogo = FALSE)
+```
+
+A partir de la @fig-temp-med-dia, se observa que la temperatura media en Liberia durante el período de enero a septiembre de 2026 presenta dos patrones . Desde inicios del año y hasta principios del mes de junio la temperatura mantiene una tendencia de crecimiento, alcanzando la mayor temperatura media diaria del año.  En el segundo semestre al temperatura presenta una tendencia de disminución de temperaturas para el mes de junio y luego se recupera el crecimiento. No obstante la variación, las condiciones climáticas típicas de la región son generalmente cálidas durante todo el año.
+
+Como respuesta a la pregunta sobre la temperatura y precipitación, se observa que en el segundo semestre la temperatura es menor y, en este período se tiene una mayor cantidad de lluvias. Ahora bien, Guanacaste tiene una marcada estación lluviosa (aproximadamente de mayo a noviembre) y una época seca (de diciembre/enero a abril) evidenciada en la @fig-precip-diaria. Durante los meses secos, la menor nubosidad favorece temperaturas más altas y mayor evaporación, reduciendo la disponibilidad de agua en la cuenca.
+
+Un fenómeno que se puede interpretar mejor observando la capa de topografía en la @fig-mapa-contexto es que en las zonas más altas de la cuenca (como las laderas volcánicas), la temperatura media anual es menor (alrededor de 22 °C a 24 °C en la parte alta del río Tempisque) y las lluvias suelen ser más abundantes por efecto orográfico. En las partes medias y bajas (planicies), la temperatura sube (cerca de 26 °C a 28 °C) y el clima es más seco.  Lo anterior también se puede comprobar por el análisis de las secciones siguientes, especialmente evidente en la @fig-mapa-estatico. 
+
+
+## Curva Masa de Precipitación Acumulada
+
+La @fig-precip-acum permite estudiar la tasa de aporte hídrico continuo y los cambios de pendiente vinculados a eventos hidrometeorológicos significativos.
+El registro total de 697 mm en nueve meses representa una reducción crítica (entre un 35% y un 45% menos) respecto al promedio histórico de la estación Liberia para este mismo periodo (usualmente entre 1100 mm y 1250 mm). La @fig-precip-acum evidencia que la acumulación de agua llovida se realizó muy lentamente para los meses de enero a mayo, con incrementos escalonados hasta mediados de junio. Para el segundo semestre de 2026 la pendiente de la curva se elevó, indicador de un aumento de lluvias con un incremento fuerte desde mediados de setiembre y finalizando con algunas lluvias torrenciales para el mes de octubre 2026.
+
+```{r}
+#| label: fig-precip-acum
+#| fig-cap: "Curva masa de precipitación acumulada en Liberia"
+#| fig-width: 9.5
+#| fig-height: 4.8
+
+# Cálculo de la precipitación acumulada
+datos_curva_masa <- precipitacion_t2 |>
+  arrange(date) |>
+  mutate(
+    precip_acumulada = cumsum(precipitation),
+    etiqueta_tooltip = paste0(
+      "<b>Fecha:</b> ", format(date, "%d/%m/%Y"), "<br>",
+      "<b>Lluvia diaria:</b> ", number(precipitation, accuracy = 0.01, decimal.mark = ","), " mm<br>",
+      "<b>Lluvia acumulada:</b> ", number(precip_acumulada, accuracy = 0.01, decimal.mark = ","), " mm"
+    )
+  )
+
+grafico_curva <- ggplot(datos_curva_masa, aes(x = date, y = precip_acumulada)) +
+  geom_area(fill = "#0284c7", alpha = 0.25) +
+  geom_line(color = "#0369a1", linewidth = 0.8) +
+  geom_point(aes(text = etiqueta_tooltip), color = "#0284c7", size = 1.1, alpha = 0.7) +
+  scale_x_date(
+    date_breaks = "1 month",
+    labels = function(x) paste(meses_es[as.integer(format(x, "%m"))], format(x, "%Y")),
+    expand = expansion(mult = c(0, 0.05))
+  ) +
+  scale_y_continuous(
+    labels = label_number(suffix = " mm", decimal.mark = ","),
+    expand = expansion(mult = c(0, 0.08))
+  ) +
+  labs(
+    title = "Curva Masa de Precipitación Acumulada",
+    x = "Fecha",
+    y = "Precipitación Acumulada (mm)"
+  )
+
+ggplotly(grafico_curva, tooltip = "text") |>
+  layout(
+    hoverlabel = list(bgcolor = "white", font = list(size = 12)),
+    margin = list(b = 85),
+    annotations = list(
+      list(
+        text = "Área sombreada: volumen acumulado continuo | Fuente: CHIRPS v3 (UCSB)",
+        xref = "paper", yref = "paper",
+        x = 0, y = -0.28,
+        showarrow = FALSE,
+        font = list(size = 10, color = "#64748b")
+      )
+    )
+  ) |>
+  config(locale = "es", displaylogo = FALSE)
+```
+
+La @fig-precip-acum corrobora que la precipitación acumulada en Liberia durante el periodo de enero a septiembre de 2026 muestra un incremento constante, con picos que reflejan eventos de lluvia intensa. La curva masa interactiva permite explorar los datos de manera detallada, proporcionando información específica sobre la precipitación diaria y acumulada en cada fecha.
+***
+
+# Análisis Espacial de la Precipitación en la Subcuenca
+
+Para el desarrollo adicional, se analizó la distribución espacial de la precipitación en la subcuenca del río Liberia durante el periodo de enero a setiembre de 2026. El procedimiento utilizado para este análisis consistió en la superposición de los datos de precipitación diaria sobre un mapa de la subcuenca, utilizando técnicas de interpolación espacial para generar un mapa continuo de precipitación acumulada. Esto permitió identificar patrones espaciales y áreas críticas que podrían estar en riesgo de inundaciones. Con la ayuda de herramientas de visualización geoespacial, se generaron mapas interactivos que facilitan la interpretación de los resultados y permitirá evaluar el riesgo de inundación por lluvias en la región.
+
+En esta sección se describen los hallazgos clave del análisis espacial, destacando las zonas con mayor acumulación de precipitación y su relación con la topografía y el uso del suelo. Además, se discuten las implicaciones de estos resultados para la planificación urbana y la mitigación de riesgos asociados a eventos extremos de lluvia.
+
+Como primer paso se realizó un análisis de la precipitación acumulada por mes, utilizando los datos de CHIRPS para cada punto de muestreo dentro de la subcuenca. Se generaron mapas mensuales que muestran la distribución espacial de la precipitación, permitiendo identificar las áreas con mayor acumulación y su evolución a lo largo del tiempo. En la @tbl-chirps-liberia se presenta un resumen de los registros diarios de precipitación obtenidos del conjunto de datos CHIRPS para Liberia, proporcionando una visión general de la variabilidad temporal y espacial de la precipitación en la región.
+
+## Carga y Resumen de Registros Diarios
+
+En la @tbl-chirps-liberia se presentan los registros pluviométricos con precisión geodésica de 5 decimales y lámina de lluvia a 2 decimales.
+
+```{r}
+#| label: tbl-chirps-liberia
+#| tbl-cap: "Muestra de registros diarios de precipitación CHIRPS en la subcuenca del Río Liberia"
+
+# 1. Lectura remota única de la base de datos espacial diaria
+url_csv_diaria <- "https://raw.githubusercontent.com/dennierchavez/Tarea_3/refs/heads/main/BD_CHIRPS_Diaria_Liberia.csv"
+datos_chirps_df <- read_csv(url_csv_diaria, show_col_types = FALSE) |> 
+  rename_with(~ "fecha", any_of(c("fecha", "date", "Fecha"))) |> 
+  rename_with(~ "chirps", any_of(c("chirps", "precip", "precipitacion_mm"))) |> 
+  mutate(fecha = as.Date(fecha))
+
+# 2. Despliegue interactivo en tabla DT
+datos_chirps_df |>
+  mutate(
+    lon = round(lon, 5),
+    lat = round(lat, 5),
+    chirps = round(chirps, 2)
+  ) |>
+  rename(any_of(c(
+    "ID Punto" = "id",
+    "Longitud" = "lon",
+    "Latitud" = "lat",
+    "Fecha" = "fecha",
+    "Precipitación (mm)" = "chirps"
+  ))) |>
+  datatable(
+    rownames = FALSE,
+    options = list(
+      pageLength = 8,
+      autoWidth = TRUE,
+      language = list(
+        search = "Buscar:",
+        lengthMenu = "Mostrar _MENU_ filas",
+        info = "Mostrando _START_ a _END_ de _TOTAL_ registros",
+        paginate = list(previous = "Anterior", `next` = "Siguiente")
+      )
+    )
+  )
+```
+
+## Procesamiento Espacial y Cambio de Proyección 
+
+Se calcula la precipitación total acumulada y la precipitación media anual por punto de control. Siguiendo las directrices del curso, se proyectan las capas del sistema **CRTM05 (EPSG:8908)** y se transforman a **WGS84 (EPSG:4326)** para su representación cartográfica.
+
+```{r}
+#| label: procesamiento-espacial-crtm05
+
+# 1. Agregación estadística por punto de muestreo
+resumen_espacial_df <- datos_chirps_df |> 
+  mutate(anio = year(fecha)) |> 
+  group_by(id, lon, lat) |> 
+  summarise(
+    dias_registrados      = n(),
+    precip_acumulada_mm   = sum(chirps, na.rm = TRUE),
+    precip_media_anual_mm = precip_acumulada_mm / n_distinct(anio),
+    precip_max_diaria_mm  = max(chirps, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# 2. Conversión a objeto sf en WGS84 (EPSG:4326)
+puntos_sf <- resumen_espacial_df |> 
+  st_as_sf(coords = c("lon", "lat"), crs = 4326)
+
+# 3. Transformación métrica a CRTM05 (EPSG:8908) y filtrado espacial
+cuenca_crtm05  <- st_transform(subcuenca_sf, 8908)
+puntos_crtm05  <- st_transform(puntos_sf, 8908)
+puntos_filtrados_crtm05 <- st_filter(puntos_crtm05, cuenca_crtm05)
+
+# 4. Proyección a WGS84 para cartografía
+puntos_cuenca_wgs84 <- st_transform(puntos_filtrados_crtm05, 4326)
+
+# Verificación de geometrías
+st_crs(puntos_cuenca_wgs84)$srid
+```
+
+## Mapa Estático de Precipitación Acumulada (`ggplot2` + `geom_sf`)
+
+La @fig-mapa-estatico ilustra la variación espacial de la precipitación total acumulada en la subcuenca del río Liberia.
+
+```{r}
+#| label: fig-mapa-estatico
+#| fig-cap: "Distribución espacial de la precipitación acumulada en la subcuenca del Río Liberia"
+#| fig-width: 8.5
+#| fig-height: 6.5
+
+ggplot() +
+  # Polígono delimitador de la subcuenca
+  geom_sf(data = subcuenca_sf, fill = "#f8fafc", color = "#1e293b", linewidth = 0.8) +
+  # Puntos con escala graduada de lluvia acumulada
+  geom_sf(
+    data = puntos_cuenca_wgs84,
+    aes(color = precip_acumulada_mm, size = precip_acumulada_mm),
+    alpha = 0.85
+  ) +
+  scale_color_viridis_c(
+    option = "viridis",
+    name = "Precipitación\nTotal (mm)",
+    labels = label_comma()
+  ) +
+  scale_size_continuous(range = c(3.5, 8.5), guide = "none") +
+  annotation_scale(location = "bl", width_hint = 0.25) +
+  annotation_north_arrow(
+    location = "tr", which_north = "true",
+    style = north_arrow_minimal(line_col = "#1e293b")
+  ) +
+  coord_sf() +
+  labs(
+    title = "Precipitación Acumulada en Puntos de Control CHIRPS",
+    subtitle = "Subcuenca del Río Liberia, Guanacaste",
+    x = "Longitud",
+    y = "Latitud",
+    caption = "Fuente: Estimaciones CHIRPS v3 procesadas a partir de BD_CHIRPS_Diaria_Liberia.csv"
+  )
+```
+
+El mapa evidencia un marcado gradiente espacial noreste-suroeste: los sectores de cabecera en las inmediaciones del macizo volcánico Rincón de la Vieja concentran los mayores volúmenes de precipitación acumulada, superando ampliamente los registros de las planicies aluviales del sector bajo cercanas a la confluencia con el río Tempisque.
+
+## Mapa Interactivo de Precipitación (`leaflet`)
+
+La @fig-mapa-interactivo permite explorar las lecturas puntuales mediante ventanas emergentes y etiquetas continuas.
+
+```{r}
+#| label: fig-mapa-interactivo
+#| fig-cap: "Mapa interactivo de la precipitación en los puntos de control de la subcuenca del río Liberia"
+
+# Paleta continua basada en la precipitación acumulada
+paleta_precip <- colorNumeric(
+  palette = "YlGnBu",
+  domain = puntos_cuenca_wgs84$precip_acumulada_mm
+)
+
+leaflet() |> 
+  # Mapas base seleccionables
+  addProviderTiles(providers$OpenTopoMap, group = "OpenTopoMap") |> 
+  addProviderTiles(providers$OpenStreetMap, group = "OpenStreetMap") |> 
+  addProviderTiles(providers$Esri.WorldImagery, group = "Satélite (Esri)") |> 
+  
+  # Delimitación de la subcuenca
+  addPolygons(
+    data = subcuenca_sf,
+    color = "#03045e",
+    weight = 2.5,
+    opacity = 0.9,
+    fillColor = "#0077b6",
+    fillOpacity = 0.2,
+    group = "Límite Subcuenca"
+  ) |> 
+  
+  # Puntos pluviométricos con popups informativos
+  addCircleMarkers(
+    data = puntos_cuenca_wgs84,
+    radius = ~rescale(precip_acumulada_mm, to = c(6, 13)),
+    color = "#0f172a",
+    weight = 1.2,
+    fillColor = ~paleta_precip(precip_acumulada_mm),
+    fillOpacity = 0.9,
+    group = "Precipitación Acumulada",
+    popup = ~paste0(
+      "<div style='font-family: Inter, sans-serif; font-size:12px;'>",
+      "<h4 style='margin:0 0 5px 0; color:#0369a1;'>Punto ID: ", id, "</h4>",
+      "<b>Lluvia Acumulada:</b> <span style='color:#b91c1c;'>", round(precip_acumulada_mm, 1), " mm</span><br>",
+      "<b>Promedio Anual:</b> ", round(precip_media_anual_mm, 1), " mm/año<br>",
+      "<b>Máximo Diario:</b> ", round(precip_max_diaria_mm, 1), " mm<br>",
+      "<b>Coordenadas:</b> (", round(st_coordinates(puntos_cuenca_wgs84)[,2], 4), ", ", round(st_coordinates(puntos_cuenca_wgs84)[,1], 4), ")",
+      "</div>"
+    ),
+    label = ~paste0("Punto ", id, ": ", round(precip_acumulada_mm, 1), " mm")
+  ) |> 
+  
+  # Leyenda continua
+  addLegend(
+    pal = paleta_precip,
+    values = puntos_cuenca_wgs84$precip_acumulada_mm,
+    title = "Precipitación (mm)",
+    position = "bottomright",
+    opacity = 0.9
+  ) |> 
+  
+  # Barra de escala métrica
+  addScaleBar(
+    position = "bottomleft",
+    options = scaleBarOptions(imperial = FALSE)
+  ) |> 
+  
+  # Control de capas
+  addLayersControl(
+    baseGroups = c("OpenTopoMap", "OpenStreetMap", "Satélite (Esri)"),
+    overlayGroups = c("Límite Subcuenca", "Precipitación Acumulada"),
+    options = layersControlOptions(collapsed = FALSE)
+  ) |> 
+  
+  # Fuente visible en el mapa interactivo
+  addControl(
+    html = "<div style='background:rgba(255,255,255,0.85); padding:4px 8px; font-size:11px; border-radius:3px;'>Fuente: CHIRPS v3 (UCSB/CHC)</div>",
+    position = "bottomleft"
+  )
+```
+
+
+Los resultados muestran que las áreas más afectadas por la lluvia intensa se encuentran en las zonas montañosas del norte y este de la subcuenca, mientras que las zonas bajas y planas presentan menor variabilidad en la precipitación.  Lo anterior es esperable según lo indicado en las secciones anteriores.  
+
+Una conclusión válida de lo mostrado en la @fig-mapa-interactivo es que las precipitaciones de mayor intensidad ocurren en la parte alta de la cuenca, mientras que en la zona urbana no se puede señalar el mismo comportamiento. Por lo tanto, las inundaciones ocasionadas por las lluvias en la zona urbana de Liberia probablemente tengan su origen en la alta escorrentía, una red de drenaje pluvial insuficiente para los caudales y en general por deficiencias en infraestructura y no por la cantidad de agua llovida.    
+
+***
+
+# Referencias Bibliográficas
+
+- Funk, C., Peterson, P., Landsfeld, M., Pedreros, D., Verdin, J., Shukla, S., Husak, G., Rowland, J., Harrison, L., Hoell, A., y Michaelsen, J. (2015). The climate hazards infrared precipitation with stations—a new environmental record for monitoring extremes. *Scientific Data*, 2(1), 1-21.[doi.org](https://doi.org/10.1038/sdata.2015.66) 
+
+- Muñoz-Sabater, J., Dutra, E., Agustí-Panareda, A., Albergel, C., Arduini, G., Balsamo, G., Boussetta, S., Choulga, M., Harrigan, S., Hersbach, H., Martens, B., Miralles, D. G., Piles, M., Rodríguez-Fernández, N. J., Zsoter, E., Buontempo, C., y Thépaut, J.-N. (2021). ERA5-Land: A state-of-the-art global reanalysis dataset for land applications. *Earth System Science Data*, 13(9), 4349–4383.[doi.org](https://doi.org/10.24381/cds.68d2bb30) 
+
+- Pebesma, E., y  Bivand, R. (2023). Spatial Data Science: With Applications in R (1st ed.). Chapman and Hall/CRC. [doi.org](https://doi.org/10.1201/9780429459016). 
+
+# Declaración sobre el Uso de Herramientas de IA
+
+En cumplimiento con los lineamientos del curso, se declara el uso del asistente Gemini Notebook (Google) para la depuración sintáctica del código Quarto, optimización de tuberías espaciales en `sf` y creación de un script para modificar el estilo del documento y uniformar visualmente las salidas cartográficas en `ggplot2` y `leaflet`, adicional se elaboró una lista de verificación para que fuera aplicada como una valoración preliminar de la tarea.
+Todos los análisis, selecciones de capas e interpretaciones hidrológicas fueron verificados por el autor.
+
+---
+
